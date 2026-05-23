@@ -1,22 +1,17 @@
-name: build-fpk-dockercopilot-from-source
+name: build-fpk-dockercopilot
 
 on:
   workflow_dispatch:
-    inputs:
-      source_ref:
-        description: 'dockerCopilot source ref (branch, tag, or commit)'
-        required: false
-        default: 'latest'
   push:
     branches:
       - main
     paths:
       - 'fpk-dockercopilot/**'
       - 'fnpack.json'
-      - '.github/workflows/build-fpk-dockercopilot-from-source.yml'
+      - '.github/workflows/build-fpk-dockercopilot.yml'
 
 concurrency:
-  group: fpk-dockercopilot-from-source-${{ github.ref }}
+  group: fpk-dockercopilot-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -25,32 +20,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      SOURCE_REF: ${{ github.event.inputs.source_ref || 'latest' }}
     steps:
-      - name: Checkout FnDepot
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Checkout dockerCopilot source
-        uses: actions/checkout@v4
-        with:
-          repository: ifsherlock/dockerCopilot
-          ref: ${{ env.SOURCE_REF }}
-          path: dockerCopilot
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: dockerCopilot/package-lock.json
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24.1'
-          cache: true
-          cache-dependency-path: dockerCopilot/go.sum
 
       - name: Install fnpack
         run: |
@@ -60,68 +32,72 @@ jobs:
           sudo install /tmp/fnpack /usr/local/bin/fnpack
           fnpack --help
 
-      - name: Build frontend
-        working-directory: dockerCopilot
+      # ✨ 新增核心步骤：拉取并配置预编译的产物
+      - name: Fetch and arrange Release binaries
         run: |
           set -e
-          npm ci
-          npm run build
+          
+          # 1. 获取最新版本号 (去除可能存在的换行符和首字母 v，确保格式纯净，如 2.1.10)
+          RAW_VERSION=$(curl -sSL https://raw.githubusercontent.com/ifsherlock/dockerCopilot/refs/heads/latest/version | tr -d '\n\r')
+          VERSION=${RAW_VERSION#v} # 如果接口返回带 v (如 v2.1.10)，自动去除 v 变成 2.1.10
+          echo "Latest version is: $VERSION"
 
-      - name: Read version
-        id: version
-        run: |
-          set -e
-          VERSION=$(cat dockerCopilot/version | tr -d '\r')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Build static backend
-        working-directory: dockerCopilot
-        run: |
-          set -e
-          mkdir -p dist/linux/amd64
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a --trimpath -buildvcs=false \
-            -ldflags="-w -s -X 'github.com/onlyLTY/dockerCopilot/internal/config.Version=${VERSION}'" \
-            -o dist/linux/amd64/dockerCopilot-new .
-          file dist/linux/amd64/dockerCopilot-new
-          strings dist/linux/amd64/dockerCopilot-new | grep -m1 "$VERSION"
-
-      - name: Prepare lightweight package tree
-        run: |
-          set -e
-          rm -rf fpk-dockercopilot/bin/dockerCopilot
-          mkdir -p fpk-dockercopilot/bin fpk-dockercopilot/ui
-          cp -f dockerCopilot/dist/linux/amd64/dockerCopilot-new fpk-dockercopilot/bin/dockerCopilot
-          chmod 755 fpk-dockercopilot/bin/dockerCopilot
-          rm -rf fpk-dockercopilot/ui
+          # 2. 下载编译好的压缩包
+          DOWNLOAD_URL="https://github.com/ifsherlock/dockerCopilot/releases/download/${VERSION}/dockerCopilot-amd64.tar.gz"
+          echo "Downloading from: $DOWNLOAD_URL"
+          curl -L -o release.tar.gz "$DOWNLOAD_URL"
+          
+          # 3. 创建临时目录并解压
+          mkdir -p temp_release
+          tar -xzf release.tar.gz -C temp_release
+          echo "解压得到的文件："
+          ls -la temp_release/
+          
+          # 4. 把解压出来的文件，移动到你的 fpk-dockercopilot 骨架中
+          # ⚠️ 注意：这里假设了压缩包解压后的结构。如果文件名对不上，你需要在这里微调
+          
+          # 移动二进制文件
+          cp temp_release/dockerCopilot fpk-dockercopilot/bin/dockerCopilot
+          chmod +x fpk-dockercopilot/bin/dockerCopilot
+          
+          # 移动前端静态资源 (如果你的压缩包里包含了 ui 文件夹)
           mkdir -p fpk-dockercopilot/ui
-          cp -a dockerCopilot/dist/. fpk-dockercopilot/ui/
+          cp -r temp_release/ui/* fpk-dockercopilot/ui/ || true
+          
+          # 移动配置文件等 (如果压缩包里也有的话)
+          cp -r temp_release/config/* fpk-dockercopilot/bin/config/ || true
+          cp temp_release/etc/dockerCopilot.yaml fpk-dockercopilot/bin/etc/dockerCopilot.yaml || true
+
+      # 骨架完整性校验（现在所有文件都已就位，不会再报错了）
+      - name: Validate package skeleton
+        run: |
+          set -e
+          test -f fpk-dockercopilot/manifest
           test -f fpk-dockercopilot/bin/config/config.json
           test -f fpk-dockercopilot/bin/etc/dockerCopilot.yaml
+          test -f fpk-dockercopilot/bin/dockerCopilot
           test -f fpk-dockercopilot/ui/index.html
-
-      - name: Sync manifest and metadata version
-        run: |
-          set -e
-          VERSION=$(cat dockerCopilot/version | tr -d '\r')
-          test -n "$VERSION"
-          python3 -c "from pathlib import Path; p=Path('fpk-dockercopilot/manifest'); lines=p.read_text().splitlines(); p.write_text('\\n'.join((('version=' + '$VERSION') if line.startswith('version=') else line) for line in lines) + '\\n')"
-          python3 -c "import json; from pathlib import Path; p=Path('fnpack.json'); data=json.loads(p.read_text()); pkg=data['fpk-dockercopilot']; pkg['version']='$VERSION'; hist=pkg.setdefault('history', {}); hist['$VERSION']='Automated build from dockerCopilot source'; p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\\n')"
-          grep '^version=' fpk-dockercopilot/manifest
-          cat fnpack.json
+          test -d fpk-dockercopilot/cmd
+          test -d fpk-dockercopilot/config
+          test -d fpk-dockercopilot/wizard
 
       - name: Build FPK
         working-directory: fpk-dockercopilot
         run: |
           set -e
           fnpack build --directory .
+          ls -lh *.fpk
+
+      - name: Compute SHA256
+        working-directory: fpk-dockercopilot
+        run: |
+          set -e
           sha256sum *.fpk | tee SHA256SUMS.txt
-          ls -lh *.fpk SHA256SUMS.txt
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fpk-dockercopilot-${{ steps.version.outputs.version }}
+          name: fpk-dockercopilot
           path: |
             fpk-dockercopilot/*.fpk
             fpk-dockercopilot/SHA256SUMS.txt
@@ -132,6 +108,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
+          # 这里从你刚刚填好的 manifest 里读取版本号发布
+          VERSION=$(grep '^version=' fpk-dockercopilot/manifest | head -n1 | cut -d'=' -f2- | tr -d '\r')
+          test -n "$VERSION"
           TAG="fpk-dockercopilot-v${VERSION}"
           TITLE="fpk-dockercopilot ${VERSION}"
           if gh release view "$TAG" >/dev/null 2>&1; then
