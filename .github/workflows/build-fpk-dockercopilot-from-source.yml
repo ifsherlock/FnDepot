@@ -55,10 +55,9 @@ jobs:
       - name: Install fnpack
         run: |
           set -e
-          curl -L -o /tmp/fnpack.tar.gz https://github.com/fnos-community/fnpack/releases/latest/download/fnpack-linux-amd64.tar.gz
-          mkdir -p /tmp/fnpack-bin
-          tar -xzf /tmp/fnpack.tar.gz -C /tmp/fnpack-bin
-          sudo install /tmp/fnpack-bin/fnpack /usr/local/bin/fnpack
+          curl -L -o /tmp/fnpack https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64
+          chmod +x /tmp/fnpack
+          sudo install /tmp/fnpack /usr/local/bin/fnpack
           fnpack --version
 
       - name: Build frontend
