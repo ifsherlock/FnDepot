@@ -113,23 +113,24 @@ jobs:
         run: |
           set -e
           python3 - <<'PY'
-from pathlib import Path
-import json
-version = Path('dockerCopilot/version').read_text().strip()
-manifest = Path('fpk-dockercopilot/manifest')
-manifest.write_text('\n'.join(
-    ('version=' + version) if line.startswith('version=') else line
-    for line in manifest.read_text().splitlines()
-) + '\n')
+          from pathlib import Path
+          import json
 
-fnpack = Path('fnpack.json')
-data = json.loads(fnpack.read_text())
-pkg = data['fpk-dockercopilot']
-pkg['version'] = version
-hist = pkg.setdefault('history', {})
-hist[version] = 'Automated build from dockerCopilot source'
-fnpack.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
-PY
+          version = Path('dockerCopilot/version').read_text().strip()
+          manifest = Path('fpk-dockercopilot/manifest')
+          manifest.write_text('\n'.join(
+              ('version=' + version) if line.startswith('version=') else line
+              for line in manifest.read_text().splitlines()
+          ) + '\n')
+
+          fnpack = Path('fnpack.json')
+          data = json.loads(fnpack.read_text())
+          pkg = data['fpk-dockercopilot']
+          pkg['version'] = version
+          hist = pkg.setdefault('history', {})
+          hist[version] = 'Automated build from dockerCopilot source'
+          fnpack.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+          PY
           grep '^version=' fpk-dockercopilot/manifest
           cat fnpack.json
 
