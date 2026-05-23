@@ -1,0 +1,81 @@
+name: build-fpk-dockercopilot
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'fpk-dockercopilot/**'
+      - 'fnpack.json'
+      - '.github/workflows/build-fpk-dockercopilot.yml'
+
+concurrency:
+  group: fpk-dockercopilot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install fnpack
+        run: |
+          set -e
+          curl -L -o /tmp/fnpack.tar.gz https://github.com/fnos-community/fnpack/releases/latest/download/fnpack-linux-amd64.tar.gz
+          mkdir -p /tmp/fnpack-bin
+          tar -xzf /tmp/fnpack.tar.gz -C /tmp/fnpack-bin
+          sudo install /tmp/fnpack-bin/fnpack /usr/local/bin/fnpack
+          fnpack --version
+
+      - name: Build FPK
+        working-directory: fpk-dockercopilot
+        run: |
+          set -e
+          fnpack build --directory .
+          ls -lh *.fpk
+
+      - name: Compute SHA256
+        working-directory: fpk-dockercopilot
+        run: |
+          set -e
+          sha256sum *.fpk | tee SHA256SUMS.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fpk-dockercopilot
+          path: |
+            fpk-dockercopilot/*.fpk
+            fpk-dockercopilot/SHA256SUMS.txt
+
+      - name: Publish package to release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          VERSION=$(python3 - <<'PY'
+from pathlib import Path
+text=Path('fpk-dockercopilot/manifest').read_text().splitlines()
+for line in text:
+    if line.startswith('version='):
+        print(line.split('=',1)[1].strip())
+        break
+else:
+    raise SystemExit('version not found in manifest')
+PY
+)
+          TAG="fpk-dockercopilot-v${VERSION}"
+          TITLE="fpk-dockercopilot ${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release exists: $TAG"
+          else
+            gh release create "$TAG" --title "$TITLE" --notes "Automated FPK package release for Docker Copilot ${VERSION}."
+          fi
+          gh release upload "$TAG" fpk-dockercopilot/*.fpk fpk-dockercopilot/SHA256SUMS.txt --clobber

@@ -2,7 +2,7 @@
   "fpk-dockercopilot": {
     "display_name": "Docker Copilot",
     "platform": "x86",
-    "version": "2.1.6",
+    "version": "2.1.10",
     "desc": "Docker 容器管理工具，原生二进制 fnOS 打包版本。",
     "labels": "Docker,运维,容器,工具",
     "distributor": "ifsherlock",
@@ -10,9 +10,10 @@
     "bug_report_url": "https://github.com/ifsherlock/dockerCopilot/issues",
     "install_type": "系统空间",
     "size": "59",
-    "changelog": "封装层修复：加入 docker 组权限，修复部分环境容器列表为空",
+    "changelog": "同步 DockerCopilot 2.1.10，自动化 FPK 打包与发布流程。",
     "history": {
-      "2.1.6": "加入 docker 组权限，修复容器列表为空问题"
+      "2.1.9": "当前 2.1.9 版本打包记录",
+      "2.1.10": "同步 DockerCopilot 2.1.10，补充自动化 FPK 构建发布工作流"
     }
   }
 }

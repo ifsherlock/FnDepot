@@ -1,0 +1,166 @@
+name: build-fpk-dockercopilot-from-source
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'dockerCopilot source ref (branch, tag, or commit)'
+        required: false
+        default: 'latest'
+  push:
+    branches:
+      - main
+    paths:
+      - 'fpk-dockercopilot/**'
+      - 'fnpack.json'
+      - '.github/workflows/build-fpk-dockercopilot-from-source.yml'
+
+concurrency:
+  group: fpk-dockercopilot-from-source-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_REF: ${{ inputs.source_ref || 'latest' }}
+    steps:
+      - name: Checkout FnDepot
+        uses: actions/checkout@v4
+
+      - name: Checkout dockerCopilot source
+        uses: actions/checkout@v4
+        with:
+          repository: ifsherlock/dockerCopilot
+          ref: ${{ env.SOURCE_REF }}
+          path: dockerCopilot
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: dockerCopilot/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.1'
+          cache: true
+          cache-dependency-path: dockerCopilot/go.sum
+
+      - name: Install fnpack
+        run: |
+          set -e
+          curl -L -o /tmp/fnpack.tar.gz https://github.com/fnos-community/fnpack/releases/latest/download/fnpack-linux-amd64.tar.gz
+          mkdir -p /tmp/fnpack-bin
+          tar -xzf /tmp/fnpack.tar.gz -C /tmp/fnpack-bin
+          sudo install /tmp/fnpack-bin/fnpack /usr/local/bin/fnpack
+          fnpack --version
+
+      - name: Build frontend
+        working-directory: dockerCopilot
+        run: |
+          set -e
+          npm ci
+          npm run build
+          rm -rf front
+          mkdir -p front
+          cp -a dist/. front/
+
+      - name: Read version
+        id: version
+        run: |
+          set -e
+          VERSION=$(cat dockerCopilot/version)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Build static backend
+        working-directory: dockerCopilot
+        run: |
+          set -e
+          mkdir -p dist/linux/amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a --trimpath -buildvcs=false \
+            -ldflags="-w -s -X 'github.com/onlyLTY/dockerCopilot/internal/config.Version=${VERSION}'" \
+            -o dist/linux/amd64/dockerCopilot-new .
+          file dist/linux/amd64/dockerCopilot-new
+          strings dist/linux/amd64/dockerCopilot-new | grep -m1 "$VERSION"
+
+      - name: Prepare FPK payload
+        run: |
+          set -e
+          rm -rf fpk-dockercopilot/.app-extract
+          mkdir -p fpk-dockercopilot/.app-extract
+          tar -xzf fpk-dockercopilot/app.tgz -C fpk-dockercopilot/.app-extract
+          cp -f dockerCopilot/dist/linux/amd64/dockerCopilot-new fpk-dockercopilot/.app-extract/bin/dockerCopilot
+          chmod 755 fpk-dockercopilot/.app-extract/bin/dockerCopilot
+          rm -f fpk-dockercopilot/app.tgz
+          tar -czf fpk-dockercopilot/app.tgz -C fpk-dockercopilot/.app-extract .
+
+          rm -rf fpk-dockercopilot/bin fpk-dockercopilot/ui fpk-dockercopilot/www fpk-dockercopilot/server \
+                 fpk-dockercopilot/dockerCopilot fpk-dockercopilot/dockerCopilot-amd64.tar.gz
+          cp -a fpk-dockercopilot/.app-extract/bin fpk-dockercopilot/bin
+          cp -a fpk-dockercopilot/.app-extract/ui fpk-dockercopilot/ui
+          if [ -d fpk-dockercopilot/.app-extract/www ]; then cp -a fpk-dockercopilot/.app-extract/www fpk-dockercopilot/www; fi
+          if [ -d fpk-dockercopilot/.app-extract/server ]; then cp -a fpk-dockercopilot/.app-extract/server fpk-dockercopilot/server; fi
+          if [ -f fpk-dockercopilot/.app-extract/dockerCopilot ]; then cp -a fpk-dockercopilot/.app-extract/dockerCopilot fpk-dockercopilot/dockerCopilot; fi
+          if [ -f fpk-dockercopilot/.app-extract/dockerCopilot-amd64.tar.gz ]; then cp -a fpk-dockercopilot/.app-extract/dockerCopilot-amd64.tar.gz fpk-dockercopilot/dockerCopilot-amd64.tar.gz; fi
+
+      - name: Sync manifest and metadata version
+        run: |
+          set -e
+          python3 - <<'PY'
+from pathlib import Path
+import json
+version = Path('dockerCopilot/version').read_text().strip()
+manifest = Path('fpk-dockercopilot/manifest')
+manifest.write_text('\n'.join(
+    ('version=' + version) if line.startswith('version=') else line
+    for line in manifest.read_text().splitlines()
+) + '\n')
+
+fnpack = Path('fnpack.json')
+data = json.loads(fnpack.read_text())
+pkg = data['fpk-dockercopilot']
+pkg['version'] = version
+hist = pkg.setdefault('history', {})
+hist[version] = 'Automated build from dockerCopilot source'
+fnpack.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+PY
+          grep '^version=' fpk-dockercopilot/manifest
+          cat fnpack.json
+
+      - name: Build FPK
+        working-directory: fpk-dockercopilot
+        run: |
+          set -e
+          fnpack build --directory .
+          sha256sum *.fpk | tee SHA256SUMS.txt
+          ls -lh *.fpk SHA256SUMS.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fpk-dockercopilot-${{ steps.version.outputs.version }}
+          path: |
+            fpk-dockercopilot/*.fpk
+            fpk-dockercopilot/SHA256SUMS.txt
+
+      - name: Publish package to release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="fpk-dockercopilot-v${VERSION}"
+          TITLE="fpk-dockercopilot ${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release exists: $TAG"
+          else
+            gh release create "$TAG" --title "$TITLE" --notes "Automated FPK package release for Docker Copilot ${VERSION}."
+          fi
+          gh release upload "$TAG" fpk-dockercopilot/*.fpk fpk-dockercopilot/SHA256SUMS.txt --clobber
