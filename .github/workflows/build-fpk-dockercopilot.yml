@@ -2,13 +2,6 @@ name: build-fpk-dockercopilot
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - 'fpk-dockercopilot/**'
-      - 'fnpack.json'
-      - '.github/workflows/build-fpk-dockercopilot.yml'
 
 concurrency:
   group: fpk-dockercopilot-${{ github.ref }}
@@ -32,7 +25,7 @@ jobs:
           sudo install /tmp/fnpack /usr/local/bin/fnpack
           fnpack --help
 
-      - name: Validate package skeleton
+      - name: Validate manual package input
         run: |
           set -e
           test -f fpk-dockercopilot/manifest
@@ -43,6 +36,7 @@ jobs:
           test -d fpk-dockercopilot/cmd
           test -d fpk-dockercopilot/config
           test -d fpk-dockercopilot/wizard
+          echo "Manual packaging prerequisites are present."
 
       - name: Build FPK
         working-directory: fpk-dockercopilot
@@ -66,7 +60,7 @@ jobs:
             fpk-dockercopilot/SHA256SUMS.txt
 
       - name: Publish package to release
-        if: github.event_name == 'push'
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -78,6 +72,6 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release exists: $TAG"
           else
-            gh release create "$TAG" --title "$TITLE" --notes "Automated FPK package release for Docker Copilot ${VERSION}."
+            gh release create "$TAG" --title "$TITLE" --notes "Manual FPK package release for Docker Copilot ${VERSION}."
           fi
           gh release upload "$TAG" fpk-dockercopilot/*.fpk fpk-dockercopilot/SHA256SUMS.txt --clobber
