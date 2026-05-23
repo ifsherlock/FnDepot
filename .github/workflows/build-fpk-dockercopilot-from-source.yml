@@ -26,7 +26,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      SOURCE_REF: ${{ inputs.source_ref || 'latest' }}
+      SOURCE_REF: ${{ github.event.inputs.source_ref || 'latest' }}
     steps:
       - name: Checkout FnDepot
         uses: actions/checkout@v4
@@ -74,7 +74,7 @@ jobs:
         id: version
         run: |
           set -e
-          VERSION=$(cat dockerCopilot/version)
+          VERSION=$(cat dockerCopilot/version | tr -d '\r')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
@@ -112,25 +112,10 @@ jobs:
       - name: Sync manifest and metadata version
         run: |
           set -e
-          python3 - <<'PY'
-          from pathlib import Path
-          import json
-
-          version = Path('dockerCopilot/version').read_text().strip()
-          manifest = Path('fpk-dockercopilot/manifest')
-          manifest.write_text('\n'.join(
-              ('version=' + version) if line.startswith('version=') else line
-              for line in manifest.read_text().splitlines()
-          ) + '\n')
-
-          fnpack = Path('fnpack.json')
-          data = json.loads(fnpack.read_text())
-          pkg = data['fpk-dockercopilot']
-          pkg['version'] = version
-          hist = pkg.setdefault('history', {})
-          hist[version] = 'Automated build from dockerCopilot source'
-          fnpack.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
-          PY
+          VERSION=$(cat dockerCopilot/version | tr -d '\r')
+          test -n "$VERSION"
+          python3 -c "from pathlib import Path; p=Path('fpk-dockercopilot/manifest'); lines=p.read_text().splitlines(); p.write_text('\\n'.join((('version=' + '$VERSION') if line.startswith('version=') else line) for line in lines) + '\\n')"
+          python3 -c "import json; from pathlib import Path; p=Path('fnpack.json'); data=json.loads(p.read_text()); pkg=data['fpk-dockercopilot']; pkg['version']='$VERSION'; hist=pkg.setdefault('history', {}); hist['$VERSION']='Automated build from dockerCopilot source'; p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\\n')"
           grep '^version=' fpk-dockercopilot/manifest
           cat fnpack.json
 

@@ -59,17 +59,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          VERSION=$(python3 - <<'PY'
-from pathlib import Path
-text=Path('fpk-dockercopilot/manifest').read_text().splitlines()
-for line in text:
-    if line.startswith('version='):
-        print(line.split('=',1)[1].strip())
-        break
-else:
-    raise SystemExit('version not found in manifest')
-PY
-)
+          VERSION=$(grep '^version=' fpk-dockercopilot/manifest | head -n1 | cut -d'=' -f2- | tr -d '\r')
+          test -n "$VERSION"
           TAG="fpk-dockercopilot-v${VERSION}"
           TITLE="fpk-dockercopilot ${VERSION}"
           if gh release view "$TAG" >/dev/null 2>&1; then
