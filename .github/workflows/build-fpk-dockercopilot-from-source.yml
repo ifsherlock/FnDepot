@@ -58,7 +58,7 @@ jobs:
           curl -L -o /tmp/fnpack https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64
           chmod +x /tmp/fnpack
           sudo install /tmp/fnpack /usr/local/bin/fnpack
-          fnpack --version
+          fnpack --help
 
       - name: Build frontend
         working-directory: dockerCopilot
@@ -66,9 +66,6 @@ jobs:
           set -e
           npm ci
           npm run build
-          rm -rf front
-          mkdir -p front
-          cp -a dist/. front/
 
       - name: Read version
         id: version
@@ -89,25 +86,19 @@ jobs:
           file dist/linux/amd64/dockerCopilot-new
           strings dist/linux/amd64/dockerCopilot-new | grep -m1 "$VERSION"
 
-      - name: Prepare FPK payload
+      - name: Prepare lightweight package tree
         run: |
           set -e
-          rm -rf fpk-dockercopilot/.app-extract
-          mkdir -p fpk-dockercopilot/.app-extract
-          tar -xzf fpk-dockercopilot/app.tgz -C fpk-dockercopilot/.app-extract
-          cp -f dockerCopilot/dist/linux/amd64/dockerCopilot-new fpk-dockercopilot/.app-extract/bin/dockerCopilot
-          chmod 755 fpk-dockercopilot/.app-extract/bin/dockerCopilot
-          rm -f fpk-dockercopilot/app.tgz
-          tar -czf fpk-dockercopilot/app.tgz -C fpk-dockercopilot/.app-extract .
-
-          rm -rf fpk-dockercopilot/bin fpk-dockercopilot/ui fpk-dockercopilot/www fpk-dockercopilot/server \
-                 fpk-dockercopilot/dockerCopilot fpk-dockercopilot/dockerCopilot-amd64.tar.gz
-          cp -a fpk-dockercopilot/.app-extract/bin fpk-dockercopilot/bin
-          cp -a fpk-dockercopilot/.app-extract/ui fpk-dockercopilot/ui
-          if [ -d fpk-dockercopilot/.app-extract/www ]; then cp -a fpk-dockercopilot/.app-extract/www fpk-dockercopilot/www; fi
-          if [ -d fpk-dockercopilot/.app-extract/server ]; then cp -a fpk-dockercopilot/.app-extract/server fpk-dockercopilot/server; fi
-          if [ -f fpk-dockercopilot/.app-extract/dockerCopilot ]; then cp -a fpk-dockercopilot/.app-extract/dockerCopilot fpk-dockercopilot/dockerCopilot; fi
-          if [ -f fpk-dockercopilot/.app-extract/dockerCopilot-amd64.tar.gz ]; then cp -a fpk-dockercopilot/.app-extract/dockerCopilot-amd64.tar.gz fpk-dockercopilot/dockerCopilot-amd64.tar.gz; fi
+          rm -rf fpk-dockercopilot/bin/dockerCopilot
+          mkdir -p fpk-dockercopilot/bin fpk-dockercopilot/ui
+          cp -f dockerCopilot/dist/linux/amd64/dockerCopilot-new fpk-dockercopilot/bin/dockerCopilot
+          chmod 755 fpk-dockercopilot/bin/dockerCopilot
+          rm -rf fpk-dockercopilot/ui
+          mkdir -p fpk-dockercopilot/ui
+          cp -a dockerCopilot/dist/. fpk-dockercopilot/ui/
+          test -f fpk-dockercopilot/bin/config/config.json
+          test -f fpk-dockercopilot/bin/etc/dockerCopilot.yaml
+          test -f fpk-dockercopilot/ui/index.html
 
       - name: Sync manifest and metadata version
         run: |

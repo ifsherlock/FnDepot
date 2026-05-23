@@ -30,7 +30,19 @@ jobs:
           curl -L -o /tmp/fnpack https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64
           chmod +x /tmp/fnpack
           sudo install /tmp/fnpack /usr/local/bin/fnpack
-          fnpack --version
+          fnpack --help
+
+      - name: Validate package skeleton
+        run: |
+          set -e
+          test -f fpk-dockercopilot/manifest
+          test -f fpk-dockercopilot/bin/config/config.json
+          test -f fpk-dockercopilot/bin/etc/dockerCopilot.yaml
+          test -f fpk-dockercopilot/bin/dockerCopilot
+          test -f fpk-dockercopilot/ui/index.html
+          test -d fpk-dockercopilot/cmd
+          test -d fpk-dockercopilot/config
+          test -d fpk-dockercopilot/wizard
 
       - name: Build FPK
         working-directory: fpk-dockercopilot

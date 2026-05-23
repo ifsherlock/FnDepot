@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# This script is called after the user upgrades the application.
+set -e
+
+mkdir -p "${TRIM_PKGVAR}/etc" "${TRIM_PKGVAR}/config"
+if [ -d "${TRIM_APPDEST}/bin/etc" ]; then
+    cp -r "${TRIM_APPDEST}/bin/etc/." "${TRIM_PKGVAR}/etc/"
+fi
+if [ -f "${TRIM_APPDEST}/bin/config/config.json" ] && [ ! -f "${TRIM_PKGVAR}/config/config.json" ]; then
+    cp "${TRIM_APPDEST}/bin/config/config.json" "${TRIM_PKGVAR}/config/config.json"
+fi
+if [ -d "${TRIM_APPDEST}/bot" ]; then
+    chmod -R u+rwX "${TRIM_APPDEST}/bot" || true
+fi
+
+exit 0

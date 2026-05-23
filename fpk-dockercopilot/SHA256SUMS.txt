@@ -1,1 +1,2 @@
-c35e7a6d498c0d28f3f9619e2148fa04ca391f5f393095ba8036a6e1a545e17f  /vol1/@apphome/trim.openclaw/data/workspace/FnDepot-DockerCopilot/fpk-dockercopilot/fpk-dockercopilot.fpk
+3b36301c91c3e244766470304f5259a73b0c6a77604018206b2fa48dfaafad9e  fpk-dockercopilot/com.ifsherlock.dockercopilot.fpk
+c35e7a6d498c0d28f3f9619e2148fa04ca391f5f393095ba8036a6e1a545e17f  fpk-dockercopilot/fpk-dockercopilot.fpk

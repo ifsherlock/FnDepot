@@ -1,0 +1,9 @@
+# Build artifacts
+fpk-dockercopilot/*.fpk
+fpk-dockercopilot/com.ifsherlock.dockercopilot.fpk
+fpk-dockercopilot/fpk-dockercopilot.fpk
+fpk-dockercopilot/dockerCopilot-amd64.tar.gz
+fpk-dockercopilot/dockerCopilot
+fpk-dockercopilot/bin/dockerCopilot
+fpk-dockercopilot/app.tgz
+com.ifsherlock.dockercopilot.fpk
