@@ -57,7 +57,7 @@ jobs:
           # ⚠️ 注意：这里假设了压缩包解压后的结构。如果文件名对不上，你需要在这里微调
           
           # 移动二进制文件
-          cp temp_release/dist/linux/amd64/dockerCopilot fpk-dockercopilot/bin/dockerCopilot
+          cp temp_release/dist/linux/amd64/dockerCopilot-new fpk-dockercopilot/bin/dockerCopilot
           chmod +x fpk-dockercopilot/bin/dockerCopilot
           
           # 移动前端静态资源 (如果你的压缩包里包含了 ui 文件夹)
