@@ -143,7 +143,7 @@ jobs:
           def replace_kv(source: str, key: str, value: str) -> str:
               pattern = rf"^({re.escape(key)}\s*=\s*).*$"
               if re.search(pattern, source, flags=re.MULTILINE):
-                  return re.sub(pattern, rf"\1{value}", source, flags=re.MULTILINE)
+                  return re.sub(pattern, rf"\g<1>{value}", source, flags=re.MULTILINE)
               if not source.endswith("\n"):
                   source += "\n"
               return source + f"{key}={value}\n"
