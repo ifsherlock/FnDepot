@@ -186,7 +186,7 @@ jobs:
             dist/version.txt
 
   publish:
-    name: Publish repository outputs
+    name: Publish repository outputs and Release
     needs: build
     runs-on: ubuntu-24.04
 
@@ -312,6 +312,23 @@ jobs:
           git add -f "${APP_DIR}" fnpack.json
           git commit -m "build: sync Docker Copilot ${VERSION}"
           git push
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.release.outputs.version }}
+          name: Docker Copilot FPK v${{ steps.release.outputs.version }}
+          body: |
+            Docker Copilot FPK packages automatically built and synced with upstream version **${{ steps.release.outputs.version }}**.
+            
+            Upstream Release: [${{ steps.release.outputs.version }}](https://github.com/${{ env.SOURCE_REPO }}/releases/tag/${{ steps.release.outputs.version }})
+          files: |
+            ${{ env.APP_DIR }}/${{ env.APP_NAME }}_x86.fpk
+            ${{ env.APP_DIR }}/${{ env.APP_NAME }}_arm.fpk
+            ${{ env.APP_DIR }}/${{ env.APP_NAME }}.fpk
+            ${{ env.APP_DIR }}/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload published repository artifact
         uses: actions/upload-artifact@v4
