@@ -1,0 +1,15 @@
+appname                      = com.ifsherlock.dockercopilot
+version                      = 2.1.12
+display_name                 = Docker Copilot
+desc                         = Docker 容器管理工具，支持 CGI 包装入口。
+arch                         = x86_64
+source                       = thirdparty
+maintainer                   = ifsherlock
+distributor                  = ifsherlock
+service_port                 = 12712
+checkport                    = false
+disable_authorization_path   = true
+ctl_stop                     = true
+desktop_uidir                = ui
+desktop_applaunchname        = com.ifsherlock.dockercopilot.Application
+os_min_version               = 0.9.27

@@ -1,0 +1,16 @@
+# Ignore local editor and macOS metadata
+**/.DS_Store
+
+# Local workflow scratch data
+work/
+artifacts/
+dist/
+tmp/
+
+# Temporary build outputs in source templates
+build-src/**/app.tgz
+build-src/**/*.fpk
+build-src/**/SHA256SUMS.txt
+
+# Local debug logs
+*.log

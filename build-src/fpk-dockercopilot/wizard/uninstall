@@ -1,0 +1,25 @@
+[{
+  "stepTitle": "卸载应用",
+  "items": [
+    {
+      "type": "tips",
+      "helpText": "请选择是否保留配置与数据文件。"
+    },
+    {
+      "type": "radio",
+      "field": "wizard_delete_data",
+      "label": "卸载时数据处理方式",
+      "initValue": "false",
+      "options": [
+        {
+          "label": "仅卸载应用，保留配置与数据（推荐）",
+          "value": "false"
+        },
+        {
+          "label": "删除全部配置与数据（不可恢复）",
+          "value": "true"
+        }
+      ]
+    }
+  ]
+}]

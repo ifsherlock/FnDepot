@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# This script is called after the user upgrades the application.
+set -e
+
+sanitize_cgi_script() {
+    local file="$1"
+    [ -f "${file}" ] || return 0
+
+    sed -i '1s/^\xEF\xBB\xBF//;s/\r$//' "${file}" 2>/dev/null || true
+    chmod +x "${file}" || true
+}
+
+mkdir -p "${TRIM_PKGVAR}/etc" "${TRIM_PKGVAR}/config"
+if [ -d "${TRIM_APPDEST}/bin/etc" ]; then
+    cp -r "${TRIM_APPDEST}/bin/etc/." "${TRIM_PKGVAR}/etc/"
+fi
+if [ -f "${TRIM_APPDEST}/bin/config/config.json" ] && [ ! -f "${TRIM_PKGVAR}/config/config.json" ]; then
+    cp "${TRIM_APPDEST}/bin/config/config.json" "${TRIM_PKGVAR}/config/config.json"
+fi
+if [ -f "${TRIM_APPDEST}/bin/dockerCopilot" ]; then
+    chmod +x "${TRIM_APPDEST}/bin/dockerCopilot" || true
+fi
+if [ -f "${TRIM_APPDEST}/ui/index.cgi" ]; then
+    sanitize_cgi_script "${TRIM_APPDEST}/ui/index.cgi"
+fi
+if [ -d "${TRIM_APPDEST}/bot" ]; then
+    chmod -R u+rwX "${TRIM_APPDEST}/bot" || true
+fi
+
+exit 0

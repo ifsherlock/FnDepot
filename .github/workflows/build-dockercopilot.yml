@@ -1,0 +1,303 @@
+name: Build Docker Copilot FPK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 指定上游 dockerCopilot Release tag，留空则使用 latest
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dockercopilot-fpk
+  cancel-in-progress: false
+
+env:
+  APP_DIR: fpk-dockercopilot
+  APP_NAME: fpk-dockercopilot
+  SOURCE_REPO: ifsherlock/dockerCopilot
+
+jobs:
+  build:
+    name: Build ${{ matrix.depot_arch }} package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            release_arch: amd64
+            manifest_arch: x86_64
+            depot_arch: x86
+            fnpack_bin: fnpack-1.2.1-linux-amd64
+          - os: ubuntu-24.04-arm
+            release_arch: arm64
+            manifest_arch: aarch64
+            depot_arch: arm
+            fnpack_bin: fnpack-1.2.1-linux-arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve upstream release
+        id: release
+        shell: bash
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          TARGET_ASSET: dockerCopilot-${{ matrix.release_arch }}.tar.gz
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_RELEASE_TAG:-}" ]; then
+            api_url="https://api.github.com/repos/${SOURCE_REPO}/releases/tags/${INPUT_RELEASE_TAG}"
+          else
+            api_url="https://api.github.com/repos/${SOURCE_REPO}/releases/latest"
+          fi
+
+          release_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${api_url}")"
+
+          version="$(printf '%s' "${release_json}" | python3 -c "import json, os, sys; data=json.load(sys.stdin); print((data.get('tag_name') or data.get('name') or '').lstrip('v'))")"
+          asset_url="$(printf '%s' "${release_json}" | python3 -c "import json, os, sys; data=json.load(sys.stdin); target=os.environ['TARGET_ASSET']; print(next((a.get('browser_download_url','') for a in data.get('assets', []) if a.get('name') == target), ''))")"
+          asset_name="$(printf '%s' "${release_json}" | python3 -c "import json, os, sys; data=json.load(sys.stdin); target=os.environ['TARGET_ASSET']; print(next((a.get('name','') for a in data.get('assets', []) if a.get('name') == target), ''))")"
+
+          if [ -z "${version}" ]; then
+            echo "Failed to resolve upstream version" >&2
+            exit 1
+          fi
+
+          if [ -z "${asset_url}" ] || [ -z "${asset_name}" ]; then
+            echo "Failed to resolve asset ${TARGET_ASSET}" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "asset_url=${asset_url}" >> "${GITHUB_OUTPUT}"
+          echo "asset_name=${asset_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download upstream binary archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p work/download work/extract work/output
+          curl -fL "${{ steps.release.outputs.asset_url }}" -o "work/download/${{ steps.release.outputs.asset_name }}"
+          tar -xzf "work/download/${{ steps.release.outputs.asset_name }}" -C work/extract
+
+          binary_path="$(find work/extract -type f -name dockerCopilot | head -n 1)"
+          if [ -z "${binary_path}" ]; then
+            echo "dockerCopilot binary not found in archive" >&2
+            exit 1
+          fi
+
+          install -m 0755 "${binary_path}" "work/output/dockerCopilot"
+
+      - name: Prepare package source
+        shell: bash
+        env:
+          PKG_VERSION: ${{ steps.release.outputs.version }}
+          MANIFEST_ARCH: ${{ matrix.manifest_arch }}
+        run: |
+          set -euo pipefail
+
+          pkg_dir="work/pkg/${APP_DIR}"
+          mkdir -p "$(dirname "${pkg_dir}")"
+          cp -a "build-src/${APP_DIR}" "${pkg_dir}"
+          install -m 0755 "work/output/dockerCopilot" "${pkg_dir}/app/bin/dockerCopilot"
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          manifest_path = Path("work/pkg") / os.environ["APP_DIR"] / "manifest"
+          text = manifest_path.read_text(encoding="utf-8")
+
+          def replace_kv(source: str, key: str, value: str) -> str:
+              pattern = rf"^({re.escape(key)}\s*=\s*).*$"
+              if re.search(pattern, source, flags=re.MULTILINE):
+                  return re.sub(pattern, rf"\1{value}", source, flags=re.MULTILINE)
+              if not source.endswith("\n"):
+                  source += "\n"
+              return source + f"{key}={value}\n"
+
+          text = replace_kv(text, "version", os.environ["PKG_VERSION"])
+          text = replace_kv(text, "arch", os.environ["MANIFEST_ARCH"])
+          manifest_path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Build FPK
+        shell: bash
+        env:
+          FNPACK_BIN: ${{ matrix.fnpack_bin }}
+        run: |
+          set -euo pipefail
+
+          chmod +x "tools/fnpack/${FNPACK_BIN}"
+
+          pkg_dir="work/pkg/${APP_DIR}"
+          pushd "${pkg_dir}" >/dev/null
+          "${GITHUB_WORKSPACE}/tools/fnpack/${FNPACK_BIN}" build
+          popd >/dev/null
+
+          built_fpk="$(find "${pkg_dir}" -maxdepth 1 -type f -name '*.fpk' | head -n 1)"
+          if [ -z "${built_fpk}" ]; then
+            echo "No FPK produced by fnpack" >&2
+            exit 1
+          fi
+
+          mkdir -p dist
+          cp "${built_fpk}" "dist/${APP_NAME}_${{ matrix.depot_arch }}.fpk"
+          printf '%s\n' "${{ steps.release.outputs.version }}" > "dist/version.txt"
+
+      - name: Upload architecture artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dockercopilot-${{ matrix.depot_arch }}
+          path: |
+            dist/${{ env.APP_NAME }}_${{ matrix.depot_arch }}.fpk
+            dist/version.txt
+
+  publish:
+    name: Publish repository outputs
+    needs: build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Resolve upstream release version
+        id: release
+        shell: bash
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_RELEASE_TAG:-}" ]; then
+            api_url="https://api.github.com/repos/${SOURCE_REPO}/releases/tags/${INPUT_RELEASE_TAG}"
+          else
+            api_url="https://api.github.com/repos/${SOURCE_REPO}/releases/latest"
+          fi
+
+          version="$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${api_url}" | python3 -c "import json, sys; data=json.load(sys.stdin); print((data.get('tag_name') or data.get('name') or '').lstrip('v'))")"
+
+          if [ -z "${version}" ]; then
+            echo "Failed to resolve publish version" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish generated packages and metadata
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          app_dir="${APP_DIR}"
+          mkdir -p "${app_dir}"
+
+          cp "artifacts/dockercopilot-x86/${APP_NAME}_x86.fpk" "${app_dir}/${APP_NAME}_x86.fpk"
+          cp "artifacts/dockercopilot-arm/${APP_NAME}_arm.fpk" "${app_dir}/${APP_NAME}_arm.fpk"
+          cp "artifacts/dockercopilot-x86/${APP_NAME}_x86.fpk" "${app_dir}/${APP_NAME}.fpk"
+
+          sha256sum \
+            "${app_dir}/${APP_NAME}_x86.fpk" \
+            "${app_dir}/${APP_NAME}_arm.fpk" \
+            "${app_dir}/${APP_NAME}.fpk" \
+            > "${app_dir}/SHA256SUMS.txt"
+
+          python3 - <<'PY'
+          import json
+          import math
+          import os
+          from pathlib import Path
+
+          root = Path(".")
+          app_dir = root / os.environ["APP_DIR"]
+          app_name = os.environ["APP_NAME"]
+          version = os.environ["VERSION"]
+
+          def size_mb(path: Path) -> str:
+              return str(max(1, math.ceil(path.stat().st_size / 1024 / 1024)))
+
+          x86_size = size_mb(app_dir / f"{app_name}_x86.fpk")
+          arm_size = size_mb(app_dir / f"{app_name}_arm.fpk")
+
+          fnpack_path = root / "fnpack.json"
+          data = {}
+          if fnpack_path.exists():
+              data = json.loads(fnpack_path.read_text(encoding="utf-8"))
+
+          data[app_name] = {
+              "display_name": "Docker Copilot",
+              "platform": ["x86", "arm"],
+              "version": version,
+              "desc": "Docker 容器管理工具，支持 CGI 同源嵌入，适配 fnOS Web 页面内打开。",
+              "labels": "Docker,运维,容器,工具",
+              "distributor": "ifsherlock",
+              "distributor_url": "https://github.com/ifsherlock/dockerCopilot",
+              "bug_report_url": "https://github.com/ifsherlock/dockerCopilot/issues",
+              "install_type": "系统空间",
+              "size": x86_size,
+              "changelog": f"同步 DockerCopilot {version} Release，自动构建 x86 / arm 双架构 FPK。",
+              "arch_diff": {
+                  "x86": {
+                      "size": x86_size
+                  },
+                  "arm": {
+                      "size": arm_size
+                  }
+              }
+          }
+
+          fnpack_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Commit repository updates
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- "${APP_DIR}" fnpack.json; then
+            echo "No repository changes to commit"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f "${APP_DIR}" fnpack.json
+          git commit -m "build: sync Docker Copilot ${VERSION}"
+          git push
+
+      - name: Upload published repository artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dockercopilot-repository-output
+          path: |
+            fpk-dockercopilot/*.fpk
+            fpk-dockercopilot/SHA256SUMS.txt
+            fnpack.json

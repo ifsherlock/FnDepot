@@ -1,0 +1,265 @@
+#!/bin/bash
+set -e
+
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"            # supervisor pid
+CHILD_PID_FILE="${TRIM_PKGVAR}/app.child.pid" # backend pid
+BOT_PID_FILE="${TRIM_PKGVAR}/bot.pid"
+STOP_FLAG_FILE="${TRIM_PKGVAR}/stop.flag"
+
+BIN_DIR="${TRIM_APPDEST}/bin"
+BIN="${BIN_DIR}/dockerCopilot"
+STAGED_BIN="${BIN_DIR}/dockerCopilot-new"
+BACKEND_CMD="${BIN} -f ${TRIM_PKGVAR}/etc/dockerCopilot.yaml"
+
+BOT_DIR="${TRIM_APPDEST}/bot"
+BOT_PYTHON="${TRIM_APPDEST}/bot/.venv/bin/python"
+
+RUN_DIR="${TRIM_PKGVAR}"
+BACKUP_DIR="${TRIM_PKGVAR}/backups"
+DOCKER_HOST_SOCK="unix:///var/run/docker.sock"
+KEY_FILE="${TRIM_PKGVAR}/key.txt"
+CONFIG_FILE="${TRIM_PKGVAR}/etc/dockerCopilot.yaml"
+BOT_CONFIG_FILE="${TRIM_PKGVAR}/config/config.json"
+PORT="12712"
+
+prepare_runtime_files() {
+  mkdir -p "${RUN_DIR}" "${BACKUP_DIR}" "${TRIM_PKGVAR}/config" "${TRIM_PKGVAR}/etc"
+  touch "${LOG_FILE}" 2>/dev/null || true
+}
+
+log_msg() {
+  prepare_runtime_files
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}" 2>/dev/null || true
+}
+
+reload_cgi_service() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl restart trim_http_cgi.service >> "${LOG_FILE}" 2>&1 || log_msg "trim_http_cgi.service restart failed"
+  else
+    log_msg "systemctl not found, skip trim_http_cgi.service restart"
+  fi
+}
+
+apply_staged_binary_if_present() {
+  if [ -f "${STAGED_BIN}" ]; then
+    log_msg "Detected staged binary, applying self-update"
+    chmod +x "${STAGED_BIN}" 2>/dev/null || true
+    mv -f "${STAGED_BIN}" "${BIN}"
+    chmod +x "${BIN}" 2>/dev/null || true
+    log_msg "Applied staged binary successfully"
+  fi
+}
+
+check_process() {
+  local pid="$1"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+read_pid_file() {
+  local f="$1"
+  [ -f "$f" ] || return 1
+  head -n 1 "$f" | tr -d '[:space:]'
+}
+
+find_backend_pid() {
+  ps -eo pid,args | awk -v b="${BIN}" '$0 ~ b && $0 ~ /-f/ {print $1}' | head -n 1
+}
+
+start_supervisor() {
+  (
+    set +e
+    while true; do
+      [ -f "${STOP_FLAG_FILE}" ] && break
+
+      apply_staged_binary_if_present
+
+      secretKey=$(cat "${KEY_FILE}" 2>/dev/null)
+      if [ -z "${secretKey}" ]; then
+        log_msg "secretKey empty, supervisor waits 2s"
+        sleep 2
+        continue
+      fi
+
+      log_msg "Launching Docker Copilot backend"
+      (
+        cd "${RUN_DIR}"
+        export DOCKER_HOST="${DOCKER_HOST_SOCK}"
+        export BACKUP_DIR="./backups"
+        export WORKDIR="${BIN_DIR}"
+        export TZ="Asia/Shanghai"
+        export secretKey
+        export DOCKERCOPILOT_BOT_CONFIG="${BOT_CONFIG_FILE}"
+        exec "${BIN}" -f "${CONFIG_FILE}"
+      ) >> "${LOG_FILE}" 2>&1 &
+
+      child_pid=$!
+      printf "%s" "$child_pid" > "${CHILD_PID_FILE}"
+      wait "$child_pid"
+      rc=$?
+      rm -f "${CHILD_PID_FILE}"
+
+      [ -f "${STOP_FLAG_FILE}" ] && break
+      log_msg "Backend exited (code=${rc}), restarting in 1s"
+      sleep 1
+    done
+    log_msg "Supervisor exiting"
+  ) >> "${LOG_FILE}" 2>&1 &
+
+  printf "%s" "$!" > "${PID_FILE}"
+}
+
+status_process() {
+  # 1) prefer supervisor pid
+  if [ -f "${PID_FILE}" ]; then
+    local spid
+    spid=$(read_pid_file "${PID_FILE}")
+    if check_process "$spid"; then
+      return 0
+    fi
+    rm -f "${PID_FILE}"
+  fi
+
+  # 2) fallback: backend still alive -> recover by launching supervisor again
+  local bpid
+  bpid=$(find_backend_pid || true)
+  if [ -n "$bpid" ] && check_process "$bpid"; then
+    printf "%s" "$bpid" > "${CHILD_PID_FILE}"
+    return 0
+  fi
+
+  rm -f "${CHILD_PID_FILE}"
+  return 1
+}
+
+start_process() {
+  if status_process; then
+    # if backend alive but supervisor missing, rebuild supervisor wrapper
+    if [ ! -f "${PID_FILE}" ]; then
+      log_msg "Recovering missing supervisor while backend is running"
+      rm -f "${STOP_FLAG_FILE}"
+      start_supervisor
+    fi
+    return 0
+  fi
+
+  prepare_runtime_files
+  rm -f "${STOP_FLAG_FILE}"
+  apply_staged_binary_if_present
+
+  if [ ! -x "${BIN}" ]; then
+    echo "dockerCopilot 二进制不存在或不可执行: ${BIN}" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+  fi
+  if [ ! -f "${KEY_FILE}" ]; then
+    echo "缺少 secretKey，请重新安装或进入设置重新填写" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+  fi
+  if [ ! -f "${CONFIG_FILE}" ]; then
+    echo "缺少配置文件：${CONFIG_FILE}" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+  fi
+
+  if [ ! -f "${BOT_CONFIG_FILE}" ] && [ -f "${TRIM_APPDEST}/bin/config/config.json" ]; then
+    cp "${TRIM_APPDEST}/bin/config/config.json" "${BOT_CONFIG_FILE}"
+  fi
+
+  log_msg "Starting Docker Copilot supervisor on port ${PORT}"
+  start_supervisor
+  sleep 2
+
+  local spid
+  spid=$(read_pid_file "${PID_FILE}" || true)
+  if [ -z "$spid" ] || ! check_process "$spid"; then
+    echo "Docker Copilot 启动失败，请查看 ${LOG_FILE}" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+  fi
+
+  # bot runtime (optional)
+  # The wrapper only passes the config path and manages the process lifecycle.
+  # Python Bot is the single source of truth for bot_token/proxy/chat_ids and
+  # decides by itself whether to run or skip when bot_token is empty.
+  if [ -x "${BOT_PYTHON}" ] && [ -d "${BOT_DIR}" ] && [ -f "${BOT_CONFIG_FILE}" ]; then
+    log_msg "Starting Telegram Bot runtime"
+    (
+      cd "${BOT_DIR}"
+      export TZ="Asia/Shanghai"
+      export DOCKERCOPILOT_BOT_CONFIG="${BOT_CONFIG_FILE}"
+      export PYTHONPATH="${BOT_DIR}"
+      exec "${BOT_PYTHON}" -m src.main
+    ) >> "${LOG_FILE}" 2>&1 &
+    printf "%s" "$!" > "${BOT_PID_FILE}"
+  else
+    log_msg "Telegram Bot runtime unavailable or config missing, skip bot runtime"
+    rm -f "${BOT_PID_FILE}"
+  fi
+
+  return 0
+}
+
+stop_process() {
+  log_msg "Stopping Docker Copilot"
+  touch "${STOP_FLAG_FILE}"
+
+  # stop bot
+  if [ -r "${BOT_PID_FILE}" ]; then
+    local bot_pid
+    bot_pid=$(read_pid_file "${BOT_PID_FILE}" || true)
+    if check_process "$bot_pid"; then
+      kill -TERM "$bot_pid" >> "${LOG_FILE}" 2>&1 || true
+      sleep 1
+      check_process "$bot_pid" && kill -KILL "$bot_pid" >> "${LOG_FILE}" 2>&1 || true
+    fi
+    rm -f "${BOT_PID_FILE}"
+  fi
+
+  # stop supervisor first
+  local spid
+  spid=$(read_pid_file "${PID_FILE}" || true)
+  if check_process "$spid"; then
+    kill -TERM "$spid" >> "${LOG_FILE}" 2>&1 || true
+  fi
+
+  # stop backend child if still alive
+  local cpid
+  cpid=$(read_pid_file "${CHILD_PID_FILE}" || true)
+  if ! check_process "$cpid"; then
+    cpid=$(find_backend_pid || true)
+  fi
+  if check_process "$cpid"; then
+    kill -TERM "$cpid" >> "${LOG_FILE}" 2>&1 || true
+    sleep 1
+    check_process "$cpid" && kill -KILL "$cpid" >> "${LOG_FILE}" 2>&1 || true
+  fi
+
+  # wait supervisor exit
+  local n=0
+  while check_process "$spid" && [ $n -lt 10 ]; do
+    sleep 1
+    n=$((n+1))
+  done
+  check_process "$spid" && kill -KILL "$spid" >> "${LOG_FILE}" 2>&1 || true
+
+  rm -f "${PID_FILE}" "${CHILD_PID_FILE}" "${STOP_FLAG_FILE}"
+  return 0
+}
+
+case "$1" in
+start)
+  start_process
+  reload_cgi_service
+  ;;
+stop)
+  stop_process
+  ;;
+status)
+  if status_process; then
+    exit 0
+  else
+    exit 3
+  fi
+  ;;
+*)
+  exit 1
+  ;;
+esac

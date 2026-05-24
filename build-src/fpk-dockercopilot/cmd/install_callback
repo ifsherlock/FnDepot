@@ -1,0 +1,118 @@
+#!/bin/bash
+set -e
+
+sync_bot_secret_to_config() {
+    local key="$1"
+    local cfg="${TRIM_PKGVAR}/config/config.json"
+    [ -n "${key}" ] || return 0
+    [ -f "${cfg}" ] || return 0
+
+    local py=""
+    for cand in "${TRIM_APPDEST}/bot/.venv/bin/python" /usr/bin/python3 /usr/local/bin/python3 python3; do
+        if [ -x "${cand}" ]; then
+            py="${cand}"
+            break
+        fi
+        if command -v "${cand}" >/dev/null 2>&1; then
+            py="$(command -v "${cand}")"
+            break
+        fi
+    done
+
+    if [ -n "${py}" ]; then
+        CFG_PATH="${cfg}" SECRET_KEY="${key}" "${py}" - <<'PY' || true
+import json, os
+p = os.environ.get("CFG_PATH", "")
+sk = os.environ.get("SECRET_KEY", "")
+if not p or not sk:
+    raise SystemExit(0)
+
+with open(p, "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+dc = data.setdefault("dockercopilot", {})
+instances = dc.get("instances")
+if not isinstance(instances, list):
+    instances = []
+
+local = None
+for inst in instances:
+    if isinstance(inst, dict) and str(inst.get("name", "")).strip().lower() == "local":
+        local = inst
+        break
+
+if local is None:
+    local = {
+        "name": "local",
+        "api_url": "http://127.0.0.1:12712",
+        "secret_key": sk,
+        "timeout": 30,
+    }
+    instances.insert(0, local)
+else:
+    local["secret_key"] = sk
+    if not str(local.get("api_url", "")).strip():
+        local["api_url"] = "http://127.0.0.1:12712"
+    if not local.get("timeout"):
+        local["timeout"] = 30
+
+dc["instances"] = instances
+if not str(dc.get("default_instance", "")).strip():
+    dc["default_instance"] = "local"
+
+with open(p, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+    fi
+}
+
+sanitize_cgi_script() {
+    local file="$1"
+    [ -f "${file}" ] || return 0
+
+    sed -i '1s/^\xEF\xBB\xBF//;s/\r$//' "${file}" 2>/dev/null || true
+    chmod +x "${file}" || true
+}
+
+mkdir -p "${TRIM_PKGVAR}" "${TRIM_PKGVAR}/backups"
+
+KEY="${wizard_key:-}"
+if [ -z "${KEY}" ]; then
+    echo "安装失败：secretKey 不能为空" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+if [ ${#KEY} -lt 8 ] || [ ${#KEY} -gt 32 ]; then
+    echo "安装失败：secretKey 需要 8-32 位" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+if ! echo "${KEY}" | grep -Eq '^[0-9]*[^0-9]+[0-9]*$'; then
+    echo "安装失败：secretKey 不能为纯数字" > "${TRIM_TEMP_LOGFILE}"
+    exit 1
+fi
+
+echo "${KEY}" > "${TRIM_PKGVAR}/key.txt"
+mkdir -p "${TRIM_PKGVAR}/etc" "${TRIM_PKGVAR}/config"
+if [ -d "${TRIM_APPDEST}/bin/etc" ]; then
+    cp -r "${TRIM_APPDEST}/bin/etc/." "${TRIM_PKGVAR}/etc/"
+fi
+if [ -f "${TRIM_APPDEST}/bin/config/config.json" ] && [ ! -f "${TRIM_PKGVAR}/config/config.json" ]; then
+    cp "${TRIM_APPDEST}/bin/config/config.json" "${TRIM_PKGVAR}/config/config.json"
+fi
+if [ -f "${TRIM_APPDEST}/bin/dockerCopilot" ]; then
+    chmod +x "${TRIM_APPDEST}/bin/dockerCopilot" || true
+fi
+if [ -f "${TRIM_APPDEST}/ui/index.cgi" ]; then
+    sanitize_cgi_script "${TRIM_APPDEST}/ui/index.cgi"
+fi
+sync_bot_secret_to_config "${KEY}"
+if [ -d "${TRIM_APPDEST}/bot" ]; then
+    chmod -R u+rwX "${TRIM_APPDEST}/bot" || true
+fi
+if [ -d "${TRIM_APPDEST}/templates" ]; then
+    cp -r "${TRIM_APPDEST}/templates" "${TRIM_PKGVAR}/templates"
+elif [ -d "${TRIM_APPDEST}/bin/templates" ]; then
+    cp -r "${TRIM_APPDEST}/bin/templates" "${TRIM_PKGVAR}/templates"
+fi
+
+exit 0
