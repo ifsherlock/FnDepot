@@ -48,7 +48,7 @@ jobs:
         shell: bash
         env:
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-          TARGET_ASSET: dockerCopilot-${{ matrix.release_arch }}.tar.gz
+          RELEASE_ARCH: ${{ matrix.release_arch }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -64,20 +64,29 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             "${api_url}")"
 
-          version="$(printf '%s' "${release_json}" | python3 -c "import json, os, sys; data=json.load(sys.stdin); print((data.get('tag_name') or data.get('name') or '').lstrip('v'))")"
-          asset_url="$(printf '%s' "${release_json}" | python3 -c "import json, os, sys; data=json.load(sys.stdin); target=os.environ['TARGET_ASSET']; print(next((a.get('browser_download_url','') for a in data.get('assets', []) if a.get('name') == target), ''))")"
-          asset_name="$(printf '%s' "${release_json}" | python3 -c "import json, os, sys; data=json.load(sys.stdin); target=os.environ['TARGET_ASSET']; print(next((a.get('name','') for a in data.get('assets', []) if a.get('name') == target), ''))")"
+          version="$(printf '%s' "${release_json}" | python3 -c "import json, sys; data=json.load(sys.stdin); print((data.get('tag_name') or data.get('name') or '').lstrip('v'))")"
 
           if [ -z "${version}" ]; then
             echo "Failed to resolve upstream version" >&2
             exit 1
           fi
 
+          mapfile -t asset_info < <(
+            printf '%s' "${release_json}" | python3 -c "import json, os, sys; data=json.load(sys.stdin); arch=os.environ['RELEASE_ARCH']; candidates=[f'dockerCopilot-{arch}.tar.gz', f'dockerCopilot-linux-{arch}.tar.gz', f'dockerCopilot-fnos-{arch}.tar.gz']; assets=data.get('assets', []); print('Available assets:'); [print(f\"- {a.get('name','')}\") for a in assets]; matched=next((a for name in candidates for a in assets if a.get('name') == name), None); print(''); print(matched.get('name','') if matched else ''); print(matched.get('browser_download_url','') if matched else '')"
+          )
+
+          echo "Resolved upstream release version: ${version}"
+          printf '%s\n' "${asset_info[@]}"
+
+          asset_name="${asset_info[-2]:-}"
+          asset_url="${asset_info[-1]:-}"
+
           if [ -z "${asset_url}" ] || [ -z "${asset_name}" ]; then
-            echo "Failed to resolve asset ${TARGET_ASSET}" >&2
+            echo "Failed to resolve a supported asset for architecture ${RELEASE_ARCH}" >&2
             exit 1
           fi
 
+          echo "Selected asset: ${asset_name}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "asset_url=${asset_url}" >> "${GITHUB_OUTPUT}"
           echo "asset_name=${asset_name}" >> "${GITHUB_OUTPUT}"
@@ -88,15 +97,26 @@ jobs:
           set -euo pipefail
 
           mkdir -p work/download work/extract work/output
-          curl -fL "${{ steps.release.outputs.asset_url }}" -o "work/download/${{ steps.release.outputs.asset_name }}"
-          tar -xzf "work/download/${{ steps.release.outputs.asset_name }}" -C work/extract
+          archive_path="work/download/${{ steps.release.outputs.asset_name }}"
 
-          binary_path="$(find work/extract -type f -name dockerCopilot | head -n 1)"
+          curl -fL "${{ steps.release.outputs.asset_url }}" -o "${archive_path}"
+
+          echo "Downloaded archive: ${archive_path}"
+          echo "Archive entries:"
+          tar -tzf "${archive_path}" || true
+
+          tar -xzf "${archive_path}" -C work/extract
+
+          echo "Extracted file tree:"
+          find work/extract -maxdepth 4 \( -type f -o -type d \) | sort
+
+          binary_path="$(find work/extract -type f \( -name dockerCopilot -o -name dockerCopilot-new -o -name '*dockerCopilot*' \) | sort | head -n 1)"
           if [ -z "${binary_path}" ]; then
             echo "dockerCopilot binary not found in archive" >&2
             exit 1
           fi
 
+          echo "Selected binary path: ${binary_path}"
           install -m 0755 "${binary_path}" "work/output/dockerCopilot"
 
       - name: Prepare package source
