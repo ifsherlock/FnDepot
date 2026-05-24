@@ -1,0 +1,8 @@
+{
+  "defaults": {
+    "run-as": "package"
+  },
+  "username": "dockercopilot",
+  "groupname": "dockercopilot",
+  "join-groups": ["docker"]
+}

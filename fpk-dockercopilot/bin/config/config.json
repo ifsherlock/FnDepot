@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+  "dockercopilot": {
+    "default_instance": "local",
+    "instances": [
+      {
+        "name": "local",
+        "api_url": "http://127.0.0.1:12712",
+        "secret_key": "",
+        "timeout": 30
+      }
+    ]
+  },
+  "telegram": {
+    "bot_token": "",
+    "chat_ids": [],
+    "polling_interval": 1,
+    "update_check_cron": "0 18 * * *",
+    "notify_on_update": true,
+    "update_blacklist": [],
+    "auto_clean_images": false,
+    "clean_images_cron": "3 2 * * *",
+    "auto_update_containers": false,
+    "update_containers_cron": "0 */6 * * *",
+    "auto_backup_json": false,
+    "backup_json_cron": "0 1 * * *",
+    "auto_backup_compose": false,
+    "backup_compose_cron": "30 1 * * *",
+    "backup_max_files": 20,
+    "image_accelerators": ["docker.1ms.run", "docker.xuanyuan.me", "dockerproxy.com"],
+    "default_image_accelerator": "docker.1ms.run",
+    "proxy": {
+      "type": "none",
+      "host": "",
+      "port": 0,
+      "username": "",
+      "password": ""
+    }
+  }
+}

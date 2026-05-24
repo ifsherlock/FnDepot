@@ -1,0 +1,25 @@
+[
+  {
+    "stepTitle": "修改Key",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "请输入新的 8-32 位、非纯数字 secretKey"
+      },
+      {
+        "type": "text",
+        "field": "wizard_key",
+        "label": "输入8-32位非纯数字Key",
+        "rules": [
+          {
+            "required": true,
+            "message": "输入错误",
+            "min": 8,
+            "max": 32,
+            "pattern": "^[0-9]*[^0-9]+[0-9]*$"
+          }
+        ]
+      }
+    ]
+  }
+]
