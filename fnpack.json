@@ -5,7 +5,7 @@
       "x86",
       "arm"
     ],
-    "version": "2.1.10",
+    "version": "2.1.12",
     "desc": "Docker 容器管理工具，支持 CGI 同源嵌入，适配 fnOS Web 页面内打开。",
     "labels": "Docker,运维,容器,工具",
     "distributor": "ifsherlock",
@@ -13,7 +13,7 @@
     "bug_report_url": "https://github.com/ifsherlock/dockerCopilot/issues",
     "install_type": "系统空间",
     "size": "12",
-    "changelog": "同步 DockerCopilot 2.1.10 Release，自动构建 x86 / arm 双架构 FPK。",
+    "changelog": "同步 DockerCopilot 2.1.12 Release，自动构建 x86 / arm 双架构 FPK。",
     "arch_diff": {
       "x86": {
         "size": "12"
